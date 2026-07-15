@@ -2,7 +2,7 @@
 // against the shared closed schemas — the client cannot even construct a
 // payload carrying repo content (invariant, client side). The only data that
 // flows up is the ResultsReport metadata; methodology/config/feedback flow down.
-import { zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, } from "../brain-api/schema.js";
+import { zFixContextResponse, zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, } from "../brain-api/schema.js";
 export class BrainClient {
     baseUrl;
     apiKey;
@@ -28,6 +28,13 @@ export class BrainClient {
     }
     async pending() {
         return zPendingResponse.parse(await this.call("/v1/feedback/pending"));
+    }
+    /**
+     * Per-ticket fix path (M9): fetch a single ticket + its stored FixPrompt and
+     * the chosen output mode. Metadata only — the brain never returns repo content.
+     */
+    async fixContext(ticketId) {
+        return zFixContextResponse.parse(await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/fix-context`));
     }
     /** Atomically reserve `count` ticket numbers; returns the first (race-free). */
     async reserveTicketNumbers(count) {

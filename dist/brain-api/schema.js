@@ -107,7 +107,24 @@ export const zResultsReport = z.strictObject({
         ticketId: z.string().max(64),
         outcome: z.string().max(500),
         url: z.string().max(500).nullable(),
+        // M9 (v1.1.0) — additive/optional, so an older brain/action that omits
+        // them still validates. Scalar metadata only (ids, urls, a short status
+        // token): precise per-run links + live status, never a place for source.
+        runId: z.string().max(128).nullable().optional(),
+        runUrl: z.string().max(500).nullable().optional(),
+        prUrl: z.string().max(500).nullable().optional(),
+        status: z.string().max(40).nullable().optional(),
     })).max(100),
+});
+/**
+ * GET /v1/tickets/:id/fix-context — the per-ticket fix path (M9). The CI action
+ * fetches a single ticket + its stored FixPrompt (metadata only — no repo tree)
+ * and the chosen output mode, then localises/executes exactly that one ticket.
+ */
+export const zFixContextResponse = z.strictObject({
+    ticket: zTriagedTicket,
+    fix: zFixPrompt.nullable(),
+    mode: z.enum(["plan", "pr", "autofix"]),
 });
 /** GET /v1/feedback/pending */
 export const zPendingResponse = z.strictObject({
