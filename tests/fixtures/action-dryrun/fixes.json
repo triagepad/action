@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "generatedAt": "2026-07-12T12:00:00.000Z",
+  "processed": [
+    {
+      "ticketId": "ticket-101",
+      "candidates": [
+        {
+          "file": "ios/App/Models/Plan.swift",
+          "symbol": "Workout.displayValue",
+          "line": 88,
+          "confidence": 0.95,
+          "signal": "string-literal",
+          "rationale": "Formatter drops the unit for >=60min durations.",
+          "verification": { "status": "verified", "detail": null }
+        }
+      ],
+      "overallConfidence": "high",
+      "validationPassed": true,
+      "needsDecision": { "required": false, "reason": null, "options": [] },
+      "promptBody": "Fix Workout.displayValue in ios/App/Models/Plan.swift line 88: durations >= 60 min render as '1h 52' (missing minute unit). Change to '1h 52m'. Add a regression test.",
+      "prompts": {
+        "plan": "PLAN ONLY — do not modify any files.\n\nFix Workout.displayValue …",
+        "pr": "Implement this fix on a new branch and open a pull request — do not merge it.\n\nFix Workout.displayValue …",
+        "autofix": "Apply this fix directly.\n\nFix Workout.displayValue …"
+      },
+      "explanation": "The shared duration formatter omits the minute unit above one hour."
+    },
+    {
+      "ticketId": "ticket-102",
+      "candidates": [
+        {
+          "file": "ios/App/ViewModels/ActivityListViewModel.swift",
+          "symbol": "runMatcher()",
+          "line": 596,
+          "confidence": 0.85,
+          "signal": "identifier",
+          "rationale": "Pre-pass clears manual matches.",
+          "verification": { "status": "verified", "detail": null }
+        }
+      ],
+      "overallConfidence": "high",
+      "validationPassed": true,
+      "needsDecision": {
+        "required": true,
+        "reason": "Fix requires either a DB migration (is_manual column) or a weaker heuristic — human must choose.",
+        "options": [
+          { "label": "Add is_manual column", "tradeoff": "Clean semantics, needs a migration." },
+          { "label": "Exempt confidence == 1.0 matches", "tradeoff": "No migration, overloads the confidence field." }
+        ]
+      },
+      "promptBody": "Stop the matcher pre-pass from reverting manual matches …",
+      "prompts": {
+        "plan": "PLAN ONLY — do not modify any files.\n\nStop the matcher pre-pass …",
+        "pr": "Implement this fix on a new branch and open a pull request — do not merge it.\n\nStop the matcher pre-pass …",
+        "autofix": null
+      },
+      "explanation": "The invariant pre-pass cannot distinguish manual from automatic matches."
+    },
+    {
+      "ticketId": "ticket-105",
+      "candidates": [
+        {
+          "file": "ios/App/Views/CalendarView.swift",
+          "symbol": null,
+          "line": null,
+          "confidence": 0.3,
+          "signal": "identifier",
+          "rationale": "Vague report; several plausible hot paths.",
+          "verification": { "status": "verified", "detail": null }
+        }
+      ],
+      "overallConfidence": "low",
+      "validationPassed": true,
+      "needsDecision": { "required": false, "reason": null, "options": [] },
+      "promptBody": "Investigate calendar scroll jank …",
+      "prompts": {
+        "plan": "PLAN ONLY — do not modify any files.\n\nInvestigate calendar scroll jank …",
+        "pr": "Implement this fix on a new branch and open a pull request — do not merge it.\n\nInvestigate calendar scroll jank …",
+        "autofix": "Apply this fix directly.\n\nInvestigate calendar scroll jank …"
+      },
+      "explanation": "Low-confidence localisation from a vague report."
+    }
+  ],
+  "skipped": [
+    { "ticketId": "ticket-104", "reason": "category \"feature-request\" is not a bug — nothing to localise" }
+  ],
+  "fixed": [
+    {
+      "ticketId": "ticket-103",
+      "reason": "displayName(for:) trims the title and falls back to the type label at HEAD",
+      "resolvedBy": "PR #255 (1d5199c)",
+      "evidenceSource": "code"
+    }
+  ]
+}

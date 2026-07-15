@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+# NOTE: dist/ is intentionally NOT ignored — it is committed so the brain can
+# consume this repo as a git dependency without any build-on-install step.

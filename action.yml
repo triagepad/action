@@ -1,0 +1,116 @@
+name: "Triagepad"
+description: >
+  TestFlight feedback -> AI triage -> code-linked tickets -> PRs, in your CI.
+  Pulls beta feedback from App Store Connect, triages it, localises each bug in
+  this repo at HEAD (validation gate, needs-decision gate, fixed/stale
+  detection), and opens one PR per eligible ticket — authored by your Triagepad
+  GitHub App installation token.
+
+inputs:
+  github_token:
+    description: "GitHub App installation token (from actions/create-github-app-token). Authors PRs/issues."
+    required: true
+  brain_url:
+    description: "Base URL of your Triagepad brain, e.g. https://triagepad-brain.fly.dev"
+    required: true
+  triagepad_api_key:
+    description: "Triagepad API key — authenticates to the brain (methodology, feedback, results)."
+    required: true
+  inference:
+    description: "byo (your anthropic_api_key goes straight to Anthropic) | managed (via the brain's transit-only proxy)."
+    default: "byo"
+  anthropic_api_key:
+    description: "Anthropic API key. Required for inference: byo."
+    required: false
+  feedback_source:
+    description: "brain (production: pending feedback from the brain) | asc (self-test: pull ASC directly in the runner; needs the asc_* inputs)."
+    default: "brain"
+  asc_issuer_id:
+    description: "App Store Connect API issuer id (feedback_source: asc only)."
+    required: false
+  asc_key_id:
+    description: "App Store Connect API key id (feedback_source: asc only)."
+    required: false
+  asc_private_key:
+    description: "App Store Connect .p8 private key CONTENT (feedback_source: asc only)."
+    required: false
+  asc_app_id:
+    description: "App Store Connect app id (feedback_source: asc only)."
+    required: false
+  app_context:
+    description: "One sentence about the app. Defaults to the brain's configured appContext."
+    required: false
+  mode:
+    description: "plan | pr | autofix. Defaults to the brain's configured mode. plan opens an issue; pr opens a PR per eligible ticket; autofix arms auto-merge."
+    required: false
+  min_confidence:
+    description: "Minimum overall localisation confidence to dispatch a fix (high | medium | low). Defaults to the brain's config."
+    required: false
+  feature_requests:
+    description: "How to surface feature-requests (never lost): issue (open a labeled backlog issue) | report (step-summary only)."
+    default: "issue"
+  feedback_limit:
+    description: "How many recent feedback items to pull per type (asc self-test only)."
+    default: "25"
+  classify_model:
+    description: "Override the brain-configured classify model."
+    required: false
+  triage_model:
+    description: "Override the brain-configured triage model."
+  agent_allowed_tools:
+    description: "Claude Code tool allowlist for the fix agent (comma-separated). No arbitrary bash by default."
+    default: "Edit,Write,Read,Grep,Glob"
+  dry_run:
+    description: "true = route bundled fixtures only: no ASC, no model calls, no PRs/issues. For CI smoke."
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install engine
+      shell: bash
+      run: npm ci --prefix "$GITHUB_ACTION_PATH" --no-audit --no-fund
+
+    - name: Install Claude Code CLI
+      if: inputs.dry_run != 'true'
+      shell: bash
+      run: npm install -g @anthropic-ai/claude-code
+
+    - name: Run Triagepad
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
+        INPUT_BRAIN_URL: ${{ inputs.brain_url }}
+        INPUT_TRIAGEPAD_API_KEY: ${{ inputs.triagepad_api_key }}
+        INPUT_INFERENCE: ${{ inputs.inference }}
+        INPUT_FEEDBACK_SOURCE: ${{ inputs.feedback_source }}
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        INPUT_ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+        INPUT_ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        INPUT_ASC_PRIVATE_KEY: ${{ inputs.asc_private_key }}
+        INPUT_ASC_APP_ID: ${{ inputs.asc_app_id }}
+        INPUT_APP_CONTEXT: ${{ inputs.app_context }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_MIN_CONFIDENCE: ${{ inputs.min_confidence }}
+        INPUT_FEATURE_REQUESTS: ${{ inputs.feature_requests }}
+        INPUT_FEEDBACK_LIMIT: ${{ inputs.feedback_limit }}
+        INPUT_CLASSIFY_MODEL: ${{ inputs.classify_model }}
+        INPUT_TRIAGE_MODEL: ${{ inputs.triage_model }}
+        INPUT_AGENT_ALLOWED_TOOLS: ${{ inputs.agent_allowed_tools }}
+        INPUT_DRY_RUN: ${{ inputs.dry_run }}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        "$GITHUB_ACTION_PATH/node_modules/.bin/tsx" "$GITHUB_ACTION_PATH/src/action/run.ts"
+
+    - name: Upload pipeline outputs (raw feedback, tickets, fixes.json)
+      if: always() && inputs.dry_run != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: triagepad-out
+        path: ${{ runner.temp }}/triagepad-out
+        if-no-files-found: ignore
