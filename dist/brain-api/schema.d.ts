@@ -212,6 +212,22 @@ export declare const zFeedbackItem: z.ZodObject<{
     locale: z.ZodNullable<z.ZodString>;
     createdAt: z.ZodNullable<z.ZodString>;
 }, z.core.$strict>;
+/**
+ * One executed action's report — the outcome + (M9) precise per-run metadata.
+ * Scalar metadata only (ids, urls, a short status token): there is no field a
+ * repo tree or file blob could ride in. Shared by the batch results report and
+ * the per-ticket execution report.
+ */
+export declare const zExecution: z.ZodObject<{
+    ticketId: z.ZodString;
+    outcome: z.ZodString;
+    url: z.ZodNullable<z.ZodString>;
+    runId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    runUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    prUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    status: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>;
+export type Execution = z.infer<typeof zExecution>;
 /** POST /v1/results — everything the CI run reports back. Metadata only. */
 export declare const zResultsReport: z.ZodObject<{
     runId: z.ZodString;
@@ -334,6 +350,23 @@ export declare const zResultsReport: z.ZodObject<{
     }, z.core.$strict>>;
 }, z.core.$strict>;
 export type ResultsReport = z.infer<typeof zResultsReport>;
+/**
+ * POST /v1/tickets/:id/execution — the per-ticket fix path reports its single
+ * run here (M9), NOT via /v1/results. A per-ticket fix re-touches a ticket whose
+ * feedback was already processed by the original triage, so the batch replay
+ * guard would reject it; this records just the enriched execution row for an
+ * existing ticket. Metadata only — same closed execution shape.
+ */
+export declare const zTicketExecution: z.ZodObject<{
+    ticketId: z.ZodString;
+    outcome: z.ZodString;
+    url: z.ZodNullable<z.ZodString>;
+    runId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    runUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    prUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    status: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>;
+export type TicketExecution = z.infer<typeof zTicketExecution>;
 /**
  * GET /v1/tickets/:id/fix-context — the per-ticket fix path (M9). The CI action
  * fetches a single ticket + its stored FixPrompt (metadata only — no repo tree)

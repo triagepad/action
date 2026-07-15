@@ -122,14 +122,12 @@ async function main() {
             log,
             runArtifactUrl,
         }, actions);
-        await brain.postResults({
-            runId,
-            feedbackIds: ticket.feedbackIds.length > 0 ? ticket.feedbackIds : [ticket.id],
-            feedbackItems: [],
-            tickets: [ticket],
-            fixes,
-            executions: mapExecutions(results),
-        });
+        // Report via the per-ticket endpoint — NOT /v1/results: the ticket's feedback
+        // was already processed by the original triage, so the batch replay guard
+        // would reject a results report. routeForCi yields exactly one action here.
+        for (const e of mapExecutions(results)) {
+            await brain.reportExecution(ticketId, e);
+        }
         log(`Done: per-ticket ${ticketId} → ${results.map((r) => r.outcome).join("; ")}`);
         return;
     }

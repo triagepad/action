@@ -2,7 +2,7 @@
 // against the shared closed schemas — the client cannot even construct a
 // payload carrying repo content (invariant, client side). The only data that
 // flows up is the ResultsReport metadata; methodology/config/feedback flow down.
-import { zFixContextResponse, zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, } from "../brain-api/schema.js";
+import { zFixContextResponse, zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, zTicketExecution, } from "../brain-api/schema.js";
 export class BrainClient {
     baseUrl;
     apiKey;
@@ -45,5 +45,14 @@ export class BrainClient {
         // Validate on the way OUT too — a malformed/smuggling payload never leaves the runner.
         const body = zResultsReport.parse(report);
         await this.call("/v1/results", { method: "POST", body: JSON.stringify(body) });
+    }
+    /**
+     * Per-ticket fix path (M9): report the single run for an existing ticket. Uses
+     * a dedicated endpoint rather than /v1/results because the ticket's feedback is
+     * already processed (original triage) — the batch replay guard would reject it.
+     */
+    async reportExecution(ticketId, execution) {
+        const body = zTicketExecution.parse(execution);
+        await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/execution`, { method: "POST", body: JSON.stringify(body) });
     }
 }

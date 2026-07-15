@@ -9,10 +9,12 @@ import {
   zPendingResponse,
   zReserveResponse,
   zResultsReport,
+  zTicketExecution,
   type FixContextResponse,
   type MethodologyResponse,
   type PendingResponse,
   type ResultsReport,
+  type TicketExecution,
 } from "../brain-api/schema.js";
 
 export class BrainClient {
@@ -62,5 +64,15 @@ export class BrainClient {
     // Validate on the way OUT too — a malformed/smuggling payload never leaves the runner.
     const body = zResultsReport.parse(report);
     await this.call("/v1/results", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /**
+   * Per-ticket fix path (M9): report the single run for an existing ticket. Uses
+   * a dedicated endpoint rather than /v1/results because the ticket's feedback is
+   * already processed (original triage) — the batch replay guard would reject it.
+   */
+  async reportExecution(ticketId: string, execution: TicketExecution): Promise<void> {
+    const body = zTicketExecution.parse(execution);
+    await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/execution`, { method: "POST", body: JSON.stringify(body) });
   }
 }
