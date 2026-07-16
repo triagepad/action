@@ -36,6 +36,14 @@ export interface ExecutionResult {
   ticketId: string;
   outcome: string;
   url: string | null;
+  /** M9: the fix PR url when this action opened one (else null). Same as `url` for open-pr. */
+  prUrl?: string | null;
+  /**
+   * M9: coarse status token for live per-run tracking. One of
+   * pr-open | merged-armed | no-change | plan | decision | feature | skipped |
+   * not-eligible | fixed. `outcome` stays the human/derivation string.
+   */
+  status?: string | null;
 }
 
 /** Label registry — colour + description are applied idempotently via `gh label create --force`. */
@@ -115,7 +123,7 @@ async function executeOne(cfg: ExecutorConfig, action: PlannedAction): Promise<E
   const id = action.ticket.id;
   switch (action.kind) {
     case "report-skip":
-      return { ticketId: id, outcome: `skipped — ${action.reason}`, url: null };
+      return { ticketId: id, outcome: `skipped — ${action.reason}`, url: null, prUrl: null, status: "skipped" };
     case "report-fixed":
       return {
         ticketId: id,
@@ -123,9 +131,11 @@ async function executeOne(cfg: ExecutorConfig, action: PlannedAction): Promise<E
           `already fixed${action.resolvedBy ? ` by ${action.resolvedBy}` : ""}` +
           `${action.evidenceSource ? ` (via ${action.evidenceSource})` : ""} — stale report, not actioned`,
         url: null,
+        prUrl: null,
+        status: "fixed",
       };
     case "report-not-eligible":
-      return { ticketId: id, outcome: `not dispatched — ${action.reason}`, url: null };
+      return { ticketId: id, outcome: `not dispatched — ${action.reason}`, url: null, prUrl: null, status: "not-eligible" };
     case "plan-issue":
       return openPlanIssue(cfg, action);
     case "decision-issue":
@@ -158,10 +168,10 @@ function openPlanIssue(cfg: ExecutorConfig, action: Extract<PlannedAction, { kin
   ].join("\n");
   if (cfg.dryRun) {
     cfg.log(`[dry-run] would open plan issue: ${title}`);
-    return { ticketId: action.ticket.id, outcome: "plan issue (dry-run)", url: null };
+    return { ticketId: action.ticket.id, outcome: "plan issue (dry-run)", url: null, prUrl: null, status: "plan" };
   }
   const url = createIssue(cfg, title, body, ["triagepad"]);
-  return { ticketId: action.ticket.id, outcome: "plan issue opened", url };
+  return { ticketId: action.ticket.id, outcome: "plan issue opened", url, prUrl: null, status: "plan" };
 }
 
 function openDecisionIssue(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "decision-issue" }>): ExecutionResult {
@@ -169,10 +179,10 @@ function openDecisionIssue(cfg: ExecutorConfig, action: Extract<PlannedAction, {
   const body = decisionIssueBody(action.ticket, action.fix);
   if (cfg.dryRun) {
     cfg.log(`[dry-run] would open decision issue: ${title}`);
-    return { ticketId: action.ticket.id, outcome: "decision issue (dry-run), no PR", url: null };
+    return { ticketId: action.ticket.id, outcome: "decision issue (dry-run), no PR", url: null, prUrl: null, status: "decision" };
   }
   const url = createIssue(cfg, title, body, ["triagepad", "triagepad:needs-decision"]);
-  return { ticketId: action.ticket.id, outcome: "decision issue opened, no PR", url };
+  return { ticketId: action.ticket.id, outcome: "decision issue opened, no PR", url, prUrl: null, status: "decision" };
 }
 
 function openFeatureIssue(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "feature-issue" }>): ExecutionResult {
@@ -187,10 +197,10 @@ function openFeatureIssue(cfg: ExecutorConfig, action: Extract<PlannedAction, { 
   const body = featureIssueBody(ticket, { testerText: fb?.text ?? null, screenshotRef });
   if (cfg.dryRun) {
     cfg.log(`[dry-run] would open feature-request backlog issue: ${title}`);
-    return { ticketId: ticket.id, outcome: "feature-request issue (dry-run), not auto-fixed", url: null };
+    return { ticketId: ticket.id, outcome: "feature-request issue (dry-run), not auto-fixed", url: null, prUrl: null, status: "feature" };
   }
   const url = createIssue(cfg, title, body, ["triagepad", "triagepad:feature-request"]);
-  return { ticketId: ticket.id, outcome: "feature-request backlog issue opened, not auto-fixed", url };
+  return { ticketId: ticket.id, outcome: "feature-request backlog issue opened, not auto-fixed", url, prUrl: null, status: "feature" };
 }
 
 function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "open-pr" }>): ExecutionResult {
@@ -200,7 +210,7 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
 
   if (cfg.dryRun) {
     cfg.log(`[dry-run] would run fix agent + open PR on ${branch}: ${title}${action.autoMerge ? " (auto-merge)" : ""}`);
-    return { ticketId: ticket.id, outcome: `PR (dry-run${action.autoMerge ? ", auto-merge" : ""})`, url: null };
+    return { ticketId: ticket.id, outcome: `PR (dry-run${action.autoMerge ? ", auto-merge" : ""})`, url: null, prUrl: null, status: "pr-open" };
   }
 
   sh(cfg, "git", ["checkout", "-B", branch, `origin/${cfg.defaultBranch}`]);
@@ -218,7 +228,7 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
   const changed = sh(cfg, "git", ["status", "--porcelain"]);
   if (!changed) {
     sh(cfg, "git", ["checkout", cfg.defaultBranch]);
-    return { ticketId: ticket.id, outcome: "agent made no changes — nothing to PR", url: null };
+    return { ticketId: ticket.id, outcome: "agent made no changes — nothing to PR", url: null, prUrl: null, status: "no-change" };
   }
 
   sh(cfg, "git", ["add", "-A"]);
@@ -239,17 +249,19 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
   applyLabels(cfg, "pr", url, ["triagepad"]);
 
   let outcome = "PR opened";
+  let status = "pr-open";
   if (action.autoMerge) {
     try {
       sh(cfg, "gh", ["pr", "merge", url, "--squash", "--auto"]);
       outcome = "PR opened, auto-merge armed";
+      status = "merged-armed";
     } catch {
       applyLabels(cfg, "pr", url, ["autofix"]);
       outcome = "PR opened, auto-merge unavailable — labeled autofix";
     }
   }
   sh(cfg, "git", ["checkout", cfg.defaultBranch]);
-  return { ticketId: ticket.id, outcome, url };
+  return { ticketId: ticket.id, outcome, url, prUrl: url, status };
 }
 
 /** The no-silent-drops surface in CI: every ticket + its outcome, always. */

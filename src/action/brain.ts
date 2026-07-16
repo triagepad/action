@@ -4,13 +4,17 @@
 // flows up is the ResultsReport metadata; methodology/config/feedback flow down.
 
 import {
+  zFixContextResponse,
   zMethodologyResponse,
   zPendingResponse,
   zReserveResponse,
   zResultsReport,
+  zTicketExecution,
+  type FixContextResponse,
   type MethodologyResponse,
   type PendingResponse,
   type ResultsReport,
+  type TicketExecution,
 } from "../brain-api/schema.js";
 
 export class BrainClient {
@@ -40,6 +44,14 @@ export class BrainClient {
     return zPendingResponse.parse(await this.call("/v1/feedback/pending"));
   }
 
+  /**
+   * Per-ticket fix path (M9): fetch a single ticket + its stored FixPrompt and
+   * the chosen output mode. Metadata only — the brain never returns repo content.
+   */
+  async fixContext(ticketId: string): Promise<FixContextResponse> {
+    return zFixContextResponse.parse(await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/fix-context`));
+  }
+
   /** Atomically reserve `count` ticket numbers; returns the first (race-free). */
   async reserveTicketNumbers(count: number): Promise<number> {
     const body = zReserveResponse.parse(
@@ -52,5 +64,15 @@ export class BrainClient {
     // Validate on the way OUT too — a malformed/smuggling payload never leaves the runner.
     const body = zResultsReport.parse(report);
     await this.call("/v1/results", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /**
+   * Per-ticket fix path (M9): report the single run for an existing ticket. Uses
+   * a dedicated endpoint rather than /v1/results because the ticket's feedback is
+   * already processed (original triage) — the batch replay guard would reject it.
+   */
+  async reportExecution(ticketId: string, execution: TicketExecution): Promise<void> {
+    const body = zTicketExecution.parse(execution);
+    await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/execution`, { method: "POST", body: JSON.stringify(body) });
   }
 }

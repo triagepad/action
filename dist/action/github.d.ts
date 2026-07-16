@@ -20,6 +20,14 @@ export interface ExecutionResult {
     ticketId: string;
     outcome: string;
     url: string | null;
+    /** M9: the fix PR url when this action opened one (else null). Same as `url` for open-pr. */
+    prUrl?: string | null;
+    /**
+     * M9: coarse status token for live per-run tracking. One of
+     * pr-open | merged-armed | no-change | plan | decision | feature | skipped |
+     * not-eligible | fixed. `outcome` stays the human/derivation string.
+     */
+    status?: string | null;
 }
 export declare function executeActions(cfg: ExecutorConfig, actions: PlannedAction[]): Promise<ExecutionResult[]>;
 /** The no-silent-drops surface in CI: every ticket + its outcome, always. */

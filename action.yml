@@ -40,6 +40,9 @@ inputs:
   app_context:
     description: "One sentence about the app. Defaults to the brain's configured appContext."
     required: false
+  ticket_id:
+    description: "Per-ticket fix path (repository_dispatch triagepad-ticket): fix exactly this one ticket instead of pulling pending feedback. Forward github.event.client_payload.ticketId here. Empty = the normal batch path."
+    required: false
   mode:
     description: "plan | pr | autofix. Defaults to the brain's configured mode. plan opens an issue; pr opens a PR per eligible ticket; autofix arms auto-merge."
     required: false
@@ -95,6 +98,7 @@ runs:
         INPUT_ASC_PRIVATE_KEY: ${{ inputs.asc_private_key }}
         INPUT_ASC_APP_ID: ${{ inputs.asc_app_id }}
         INPUT_APP_CONTEXT: ${{ inputs.app_context }}
+        INPUT_TICKET_ID: ${{ inputs.ticket_id }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_MIN_CONFIDENCE: ${{ inputs.min_confidence }}
         INPUT_FEATURE_REQUESTS: ${{ inputs.feature_requests }}

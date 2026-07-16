@@ -1,6 +1,6 @@
 {
   "name": "@triagepad/core",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Triagepad — TestFlight feedback → AI triage → code-linked fix PRs. The GitHub Action + the transplantable pipeline core.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",

@@ -104,6 +104,25 @@ export const zFeedbackItem = z.strictObject({
 
 // --- requests / responses ---
 
+/**
+ * One executed action's report — the outcome + (M9) precise per-run metadata.
+ * Scalar metadata only (ids, urls, a short status token): there is no field a
+ * repo tree or file blob could ride in. Shared by the batch results report and
+ * the per-ticket execution report.
+ */
+export const zExecution = z.strictObject({
+  ticketId: z.string().max(64),
+  outcome: z.string().max(500),
+  url: z.string().max(500).nullable(),
+  // M9 (v1.1.0) — additive/optional, so an older brain/action that omits them
+  // still validates.
+  runId: z.string().max(128).nullable().optional(),
+  runUrl: z.string().max(500).nullable().optional(),
+  prUrl: z.string().max(500).nullable().optional(),
+  status: z.string().max(40).nullable().optional(),
+});
+export type Execution = z.infer<typeof zExecution>;
+
 /** POST /v1/results — everything the CI run reports back. Metadata only. */
 export const zResultsReport = z.strictObject({
   runId: z.string().max(128),
@@ -116,15 +135,31 @@ export const zResultsReport = z.strictObject({
   feedbackItems: z.array(zFeedbackItem).max(200),
   tickets: z.array(zTriagedTicket).max(100),
   fixes: zFixesOutput,
-  executions: z.array(
-    z.strictObject({
-      ticketId: z.string().max(64),
-      outcome: z.string().max(500),
-      url: z.string().max(500).nullable(),
-    }),
-  ).max(100),
+  executions: z.array(zExecution).max(100),
 });
 export type ResultsReport = z.infer<typeof zResultsReport>;
+
+/**
+ * POST /v1/tickets/:id/execution — the per-ticket fix path reports its single
+ * run here (M9), NOT via /v1/results. A per-ticket fix re-touches a ticket whose
+ * feedback was already processed by the original triage, so the batch replay
+ * guard would reject it; this records just the enriched execution row for an
+ * existing ticket. Metadata only — same closed execution shape.
+ */
+export const zTicketExecution = zExecution;
+export type TicketExecution = z.infer<typeof zTicketExecution>;
+
+/**
+ * GET /v1/tickets/:id/fix-context — the per-ticket fix path (M9). The CI action
+ * fetches a single ticket + its stored FixPrompt (metadata only — no repo tree)
+ * and the chosen output mode, then localises/executes exactly that one ticket.
+ */
+export const zFixContextResponse = z.strictObject({
+  ticket: zTriagedTicket,
+  fix: zFixPrompt.nullable(),
+  mode: z.enum(["plan", "pr", "autofix"]),
+});
+export type FixContextResponse = z.infer<typeof zFixContextResponse>;
 
 /** GET /v1/feedback/pending */
 export const zPendingResponse = z.strictObject({

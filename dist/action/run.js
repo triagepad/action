@@ -64,6 +64,7 @@ async function main() {
     log(`brain: methodology v${methodology.version} fetched`);
     const mode = (optionalInput("mode") ?? brainConfig.defaultMode);
     const minConfidence = (optionalInput("min_confidence") ?? brainConfig.minConfidence);
+    const featureRequests = (optionalInput("feature_requests") ?? "issue");
     const appContext = optionalInput("app_context") ?? brainConfig.appContext;
     const models = {
         classify: optionalInput("classify_model") ?? brainConfig.models.classify,
@@ -76,6 +77,60 @@ async function main() {
         : new Anthropic({ apiKey: input("anthropic_api_key") });
     if (inference === "byo")
         process.env.ANTHROPIC_API_KEY = input("anthropic_api_key");
+    // Ambient run identity — the same GitHub Actions run for every execution here,
+    // threaded into the report so the brain can link each result to its exact run.
+    const runId = process.env.GITHUB_RUN_ID ?? `local-${Date.now()}`;
+    const server = process.env.GITHUB_SERVER_URL ?? "https://github.com";
+    const runArtifactUrl = process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+        ? `${server}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+        : null;
+    const anthropicApiKey = inference === "byo" ? input("anthropic_api_key") : "";
+    const mapExecutions = (results) => results.map((r) => ({
+        ticketId: r.ticketId,
+        outcome: r.outcome,
+        url: r.url,
+        runId,
+        runUrl: runArtifactUrl,
+        prUrl: r.prUrl ?? null,
+        status: r.status ?? null,
+    }));
+    // --- Per-ticket fix path (M9). Triggered by the dashboard's dispatch button,
+    // which fires repository_dispatch `triagepad-ticket` with client_payload the
+    // workflow forwards as `ticket_id` (+ `mode`). We fetch just this ticket's
+    // stored fix from the brain (metadata only — the repo tree never leaves CI),
+    // localise-execute exactly it, and report the single run back. No feedback
+    // pull / reserve / dedupe — that's the batch path below.
+    const ticketId = optionalInput("ticket_id");
+    if (ticketId) {
+        log(`per-ticket fix: ${ticketId} (mode=${mode})`);
+        const { ticket, fix } = await brain.fixContext(ticketId);
+        const fixes = {
+            version: 1,
+            generatedAt: new Date().toISOString(),
+            processed: fix ? [fix] : [],
+            skipped: [],
+            fixed: [],
+        };
+        const actions = routeForCi([ticket], fixes, { mode, minConfidence, featureRequests });
+        const results = await executeActions({
+            repoDir: workspace,
+            githubToken: input("github_token"),
+            anthropicApiKey,
+            agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
+            defaultBranch: detectDefaultBranch(workspace),
+            dryRun: false,
+            log,
+            runArtifactUrl,
+        }, actions);
+        // Report via the per-ticket endpoint — NOT /v1/results: the ticket's feedback
+        // was already processed by the original triage, so the batch replay guard
+        // would reject a results report. routeForCi yields exactly one action here.
+        for (const e of mapExecutions(results)) {
+            await brain.reportExecution(ticketId, e);
+        }
+        log(`Done: per-ticket ${ticketId} → ${results.map((r) => r.outcome).join("; ")}`);
+        return;
+    }
     const outRoot = join(process.env.RUNNER_TEMP ?? tmpdir(), "triagepad-out");
     mkdirSync(join(outRoot, "raw"), { recursive: true });
     // --- 3. Feedback + dedupe/numbering (the brain owns both).
@@ -138,17 +193,12 @@ async function main() {
     });
     writeFileSync(join(outRoot, "fixes.json"), JSON.stringify(fixes, null, 2));
     // --- 5. Route + execute (PRs via the GitHub App token).
-    const featureRequests = (optionalInput("feature_requests") ?? "issue");
     const actions = routeForCi(tickets, fixes, { mode, minConfidence, featureRequests });
     const feedbackLookup = new Map(newItems.map((i) => [i.id, { text: i.text, screenshotPath: i.screenshotPath }]));
-    const server = process.env.GITHUB_SERVER_URL ?? "https://github.com";
-    const runArtifactUrl = process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
-        ? `${server}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-        : null;
     const results = await executeActions({
         repoDir: workspace,
         githubToken: input("github_token"),
-        anthropicApiKey: inference === "byo" ? input("anthropic_api_key") : "",
+        anthropicApiKey,
         agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
         defaultBranch: detectDefaultBranch(workspace),
         dryRun: false,
@@ -158,12 +208,12 @@ async function main() {
     }, actions);
     // --- 6. Report metadata back (closed schema; no repo content can ride along).
     await brain.postResults({
-        runId: process.env.GITHUB_RUN_ID ?? `local-${Date.now()}`,
+        runId,
         feedbackIds: newItems.map((i) => i.id),
         feedbackItems: selfPulled ? newItems.filter((i) => !pending.items.some((p) => p.id === i.id)) : [],
         tickets,
         fixes,
-        executions: results.map((r) => ({ ticketId: r.ticketId, outcome: r.outcome, url: r.url })),
+        executions: mapExecutions(results),
     });
     log(`Done: ${tickets.length} ticket(s) routed, results reported to the brain.`);
 }
