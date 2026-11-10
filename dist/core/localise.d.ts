@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { FixedTicket, FixesOutput, FixPrompt, LocalisationCandidate, NeedsDecision, RepoAccess, TriagedTicket } from "./types.js";
 import { type MethodologyBundle } from "./methodology.js";
+import { type StalePrecheckOptions } from "./staleCheck.js";
 export interface LocaliseOptions {
     client: Anthropic;
     models: {
@@ -14,6 +15,8 @@ export interface LocaliseOptions {
     readAttachment: (path: string) => Buffer | null;
     appContext: string;
     log?: (message: string) => void;
+    /** Opt-in cheap stale-report pre-check (see staleCheck.ts). Absent = off. */
+    stalePrecheck?: StalePrecheckOptions;
 }
 export interface StaleAssessment {
     /** Layer A — the authoritative verdict about the top candidate location. */

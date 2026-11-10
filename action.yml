@@ -63,6 +63,9 @@ inputs:
   agent_allowed_tools:
     description: "Claude Code tool allowlist for the fix agent (comma-separated). No arbitrary bash by default."
     default: "Edit,Write,Read,Grep,Glob"
+  stale_precheck:
+    description: "on | off. on = a cheap pass on the classify model first; a ticket short-circuits to 'already fixed' only when that pass finds the defect absent at HEAD AND cites a commit verified as an ancestor of HEAD (and newer than the tester's build when it resolves). Otherwise the full loop runs. Default off until evaluated."
+    default: "off"
   dry_run:
     description: "true = route bundled fixtures only: no ASC, no model calls, no PRs/issues. For CI smoke."
     default: "false"
@@ -106,6 +109,7 @@ runs:
         INPUT_CLASSIFY_MODEL: ${{ inputs.classify_model }}
         INPUT_TRIAGE_MODEL: ${{ inputs.triage_model }}
         INPUT_AGENT_ALLOWED_TOOLS: ${{ inputs.agent_allowed_tools }}
+        INPUT_STALE_PRECHECK: ${{ inputs.stale_precheck }}
         INPUT_DRY_RUN: ${{ inputs.dry_run }}
       run: |
         cd "$GITHUB_WORKSPACE"

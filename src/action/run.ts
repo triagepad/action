@@ -222,6 +222,8 @@ async function main(): Promise<void> {
     appContext,
     readAttachment,
     log,
+    // Opt-in (input stale_precheck: on): cheap pass first, strict gate, else the full loop.
+    stalePrecheck: input("stale_precheck", "off") === "on" ? { model: models.classify } : undefined,
   });
   writeFileSync(join(outRoot, "fixes.json"), JSON.stringify(fixes, null, 2));
 

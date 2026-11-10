@@ -6,6 +6,7 @@
 import { render } from "./methodology.js";
 import { buildPrompts } from "./modes.js";
 import { verifyCandidate } from "./validate.js";
+import { precheckFixedRoute, PRECHECK_MAX_TOOL_TURNS } from "./staleCheck.js";
 import { keepOnlySharedBreakpoint, localiseFirstMessage, moveTailBreakpoint, splitLocalisePrompt, } from "./promptCache.js";
 const MAX_TOOL_TURNS = 16;
 const MAX_CRASH_LOG_CHARS = 15_000;
@@ -141,7 +142,20 @@ export async function localiseTickets(opts) {
             continue;
         }
         log(`${ticket.id}: ${ticket.title}`);
-        const parsed = await localiseBug(opts, ticket, fileTree);
+        if (opts.stalePrecheck) {
+            const pre = opts.stalePrecheck;
+            const cheap = await localiseBug(opts, ticket, fileTree, pre.model, pre.maxTurns ?? PRECHECK_MAX_TOOL_TURNS).catch((err) => {
+                log(`${ticket.id}: pre-check failed (${err.message}) — running the full loop`);
+                return null;
+            });
+            const fixed = precheckFixedRoute(ticket, cheap, opts.repo);
+            if (fixed) {
+                output.fixed.push(fixed);
+                log(`${ticket.id}: already fixed (pre-check, ${pre.model})${fixed.resolvedBy ? ` (${fixed.resolvedBy})` : ""}`);
+                continue;
+            }
+        }
+        const parsed = await localiseBug(opts, ticket, fileTree, opts.models.triage, MAX_TOOL_TURNS);
         const route = routeLocalisation(ticket, parsed, opts.repo);
         if (route.kind === "fixed") {
             output.fixed.push(route.ticket);
@@ -153,7 +167,7 @@ export async function localiseTickets(opts) {
     }
     return output;
 }
-async function localiseBug(opts, bug, fileTree) {
+async function localiseBug(opts, bug, fileTree, model, maxTurns) {
     const crashBytes = bug.crashLogPath ? opts.readAttachment(bug.crashLogPath) : null;
     const crashLog = crashBytes ? crashBytes.toString("utf8").slice(0, MAX_CRASH_LOG_CHARS) : null;
     const m = opts.methodology;
@@ -178,10 +192,10 @@ async function localiseBug(opts, bug, fileTree) {
     });
     const messages = [localiseFirstMessage(blocks)];
     const tools = buildTools(opts.repo, m);
-    for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    for (let turn = 0; turn < maxTurns; turn++) {
         moveTailBreakpoint(messages);
         const res = await opts.client.messages.create({
-            model: opts.models.triage,
+            model,
             max_tokens: 4096,
             tools,
             messages,
@@ -210,7 +224,7 @@ async function localiseBug(opts, bug, fileTree) {
     messages.push({ role: "user", content: m.prompts.localiseFinal });
     keepOnlySharedBreakpoint(messages, blocks.shared !== null);
     const final = await opts.client.messages.create({
-        model: opts.models.triage,
+        model,
         max_tokens: 4096,
         output_config: { format: { type: "json_schema", schema: m.schemas.localisation } },
         messages,

@@ -20,5 +20,11 @@ export {
   type LocalisationRoute,
   type StaleAssessment,
 } from "./localise.js";
+export {
+  precheckFixedRoute,
+  headSha,
+  PRECHECK_MAX_TOOL_TURNS,
+  type StalePrecheckOptions,
+} from "./staleCheck.js";
 export { verifyCandidate } from "./validate.js";
 export { buildPrompts } from "./modes.js";
