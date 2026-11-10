@@ -20,8 +20,8 @@ import { localiseTickets, triageFeedback, } from "../core/index.js";
 import { localRepoAccess } from "../repo.js";
 import { runPull } from "../stages/pull.js";
 import { BrainClient } from "./brain.js";
-import { executeActions } from "./github.js";
 import { fileLedger } from "./ledger.js";
+import { executeActions } from "./github.js";
 import { routeForCi } from "./route.js";
 const ENGINE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function input(name, fallback) {
@@ -118,6 +118,7 @@ async function main() {
             githubToken: input("github_token"),
             anthropicApiKey,
             agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
+            agent: agentConfig(models.triage),
             defaultBranch: detectDefaultBranch(workspace),
             dryRun: false,
             log,
@@ -205,6 +206,7 @@ async function main() {
         githubToken: input("github_token"),
         anthropicApiKey,
         agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
+        agent: agentConfig(models.triage),
         defaultBranch: detectDefaultBranch(workspace),
         dryRun: false,
         log,
@@ -221,6 +223,22 @@ async function main() {
         executions: mapExecutions(results),
     });
     log(`Done: ${tickets.length} ticket(s) routed, results reported to the brain.`);
+}
+/**
+ * Fix-agent bounds: action inputs win, then TRIAGEPAD_AGENT_* env (resolved in
+ * agentLimits), then defaults. The model defaults to the localisation model.
+ */
+function agentConfig(triageModel) {
+    const num = (name) => {
+        const n = Number(optionalInput(name) ?? NaN);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    const minutes = num("agent_timeout_minutes");
+    return {
+        model: optionalInput("agent_model") ?? process.env.TRIAGEPAD_AGENT_MODEL ?? triageModel,
+        maxTurns: num("agent_max_turns"),
+        timeoutMs: minutes === undefined ? undefined : minutes * 60_000,
+    };
 }
 /** Config shim for runPull when the self-test pulls ASC directly in the runner. */
 function ascPullConfig(outRoot, appContext, models) {

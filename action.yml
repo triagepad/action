@@ -66,6 +66,15 @@ inputs:
   stale_precheck:
     description: "on | off. on = a cheap pass on the classify model first; a ticket short-circuits to 'already fixed' only when that pass finds the defect absent at HEAD AND cites a commit verified as an ancestor of HEAD (and newer than the tester's build when it resolves). Otherwise the full loop runs. Default off until evaluated."
     default: "off"
+  agent_model:
+    description: "Model for the headless fix agent (claude -p --model). Default: the triage model. Env TRIAGEPAD_AGENT_MODEL."
+    required: false
+  agent_max_turns:
+    description: "Max turns for the fix agent (claude -p --max-turns). Default 40. Env TRIAGEPAD_AGENT_MAX_TURNS."
+    required: false
+  agent_timeout_minutes:
+    description: "Wall-clock limit per fix agent run; on timeout the partial edit is discarded and no PR opens. Default 20. Env TRIAGEPAD_AGENT_TIMEOUT_MINUTES."
+    required: false
   dry_run:
     description: "true = route bundled fixtures only: no ASC, no model calls, no PRs/issues. For CI smoke."
     default: "false"
@@ -119,6 +128,9 @@ runs:
         INPUT_TRIAGE_MODEL: ${{ inputs.triage_model }}
         INPUT_AGENT_ALLOWED_TOOLS: ${{ inputs.agent_allowed_tools }}
         INPUT_STALE_PRECHECK: ${{ inputs.stale_precheck }}
+        INPUT_AGENT_MODEL: ${{ inputs.agent_model }}
+        INPUT_AGENT_MAX_TURNS: ${{ inputs.agent_max_turns }}
+        INPUT_AGENT_TIMEOUT_MINUTES: ${{ inputs.agent_timeout_minutes }}
         INPUT_DRY_RUN: ${{ inputs.dry_run }}
       run: |
         cd "$GITHUB_WORKSPACE"
