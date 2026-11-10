@@ -6,6 +6,7 @@
 import { render } from "./methodology.js";
 import { buildPrompts } from "./modes.js";
 import { verifyCandidate } from "./validate.js";
+import { keepOnlySharedBreakpoint, localiseFirstMessage, moveTailBreakpoint, splitLocalisePrompt, } from "./promptCache.js";
 const MAX_TOOL_TURNS = 16;
 const MAX_CRASH_LOG_CHARS = 15_000;
 // Tool input schemas are structural (code); the descriptions are methodology.
@@ -163,24 +164,26 @@ async function localiseBug(opts, bug, fileTree) {
             buildLine: render(m.prompts.localiseBuildLine, { build: bug.build, sha: buildSha }),
         })
         : "";
-    const messages = [
-        {
-            role: "user",
-            content: render(m.prompts.localiseAgent, {
-                appContext: opts.appContext,
-                layerB,
-                layerC: opts.repo.history ? m.prompts.localiseLayerC : "",
-                ticket: JSON.stringify(bug, null, 2),
-                crashSection: crashLog ? render(m.prompts.localiseCrashSection, { crashLog }) : "",
-                fileTree: fileTree.join("\n"),
-            }),
-        },
-    ];
+    // Cache layout (see promptCache.ts): run-wide prefix and per-ticket block
+    // each carry a breakpoint; a third, moving breakpoint caches the growing
+    // tool history turn by turn. Prefix order tools -> messages is stable: the
+    // tool list is built once per ticket and never changes inside the loop.
+    const blocks = splitLocalisePrompt(m.prompts.localiseAgent, {
+        appContext: opts.appContext,
+        layerB,
+        layerC: opts.repo.history ? m.prompts.localiseLayerC : "",
+        ticket: JSON.stringify(bug, null, 2),
+        crashSection: crashLog ? render(m.prompts.localiseCrashSection, { crashLog }) : "",
+        fileTree: fileTree.join("\n"),
+    });
+    const messages = [localiseFirstMessage(blocks)];
+    const tools = buildTools(opts.repo, m);
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+        moveTailBreakpoint(messages);
         const res = await opts.client.messages.create({
             model: opts.models.triage,
             max_tokens: 4096,
-            tools: buildTools(opts.repo, m),
+            tools,
             messages,
         });
         messages.push({ role: "assistant", content: res.content });
@@ -198,8 +201,14 @@ async function localiseBug(opts, bug, fileTree) {
         }
         messages.push({ role: "user", content: results });
     }
-    // Final turn: force the structured result (no tools, JSON schema).
+    // Final turn: force the structured result (no tools, JSON schema). Measured:
+    // a json_schema output_config invalidates the loop's cache whether or not the
+    // tools are kept (read 0 either way), so the history cannot be reused here.
+    // Only the run-wide prefix keeps its marker: every later ticket's final call
+    // in the run reads it (measured: ~46.7k tokens read). Writing the rest would
+    // cost 1.25x for an entry nothing reads.
     messages.push({ role: "user", content: m.prompts.localiseFinal });
+    keepOnlySharedBreakpoint(messages, blocks.shared !== null);
     const final = await opts.client.messages.create({
         model: opts.models.triage,
         max_tokens: 4096,
