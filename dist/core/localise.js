@@ -6,7 +6,8 @@
 import { render } from "./methodology.js";
 import { buildPrompts } from "./modes.js";
 import { verifyCandidate } from "./validate.js";
-import { precheckFixedRoute, PRECHECK_MAX_TOOL_TURNS } from "./staleCheck.js";
+import { headSha, precheckFixedRoute, PRECHECK_MAX_TOOL_TURNS } from "./staleCheck.js";
+import { ledgerKey, relabel } from "./ledger.js";
 import { keepOnlySharedBreakpoint, localiseFirstMessage, moveTailBreakpoint, splitLocalisePrompt, } from "./promptCache.js";
 const MAX_TOOL_TURNS = 16;
 const MAX_CRASH_LOG_CHARS = 15_000;
@@ -132,6 +133,15 @@ export async function localiseTickets(opts) {
         fixed: [],
     };
     const fileTree = opts.repo.listFiles();
+    const head = opts.ledger ? headSha(opts.repo) : null;
+    const record = (ticket, entry) => {
+        if (entry.kind === "fixed")
+            output.fixed.push(entry.ticket);
+        else
+            output.processed.push(entry.fix);
+        if (opts.ledger && head)
+            opts.ledger.put(ledgerKey(ticket, head, opts.models.triage), entry);
+    };
     for (const ticket of opts.tickets) {
         if (!ticket.isRealBug) {
             output.skipped.push({
@@ -142,6 +152,16 @@ export async function localiseTickets(opts) {
             continue;
         }
         log(`${ticket.id}: ${ticket.title}`);
+        const prior = opts.ledger && head ? opts.ledger.get(ledgerKey(ticket, head, opts.models.triage)) : null;
+        if (prior) {
+            const entry = relabel(prior, ticket.id);
+            if (entry.kind === "fixed")
+                output.fixed.push(entry.ticket);
+            else
+                output.processed.push(entry.fix);
+            log(`${ticket.id}: already localised at ${head} for the same feedback — reused, no model calls`);
+            continue;
+        }
         if (opts.stalePrecheck) {
             const pre = opts.stalePrecheck;
             const cheap = await localiseBug(opts, ticket, fileTree, pre.model, pre.maxTurns ?? PRECHECK_MAX_TOOL_TURNS).catch((err) => {
@@ -150,7 +170,7 @@ export async function localiseTickets(opts) {
             });
             const fixed = precheckFixedRoute(ticket, cheap, opts.repo);
             if (fixed) {
-                output.fixed.push(fixed);
+                record(ticket, { kind: "fixed", ticket: fixed });
                 log(`${ticket.id}: already fixed (pre-check, ${pre.model})${fixed.resolvedBy ? ` (${fixed.resolvedBy})` : ""}`);
                 continue;
             }
@@ -158,11 +178,11 @@ export async function localiseTickets(opts) {
         const parsed = await localiseBug(opts, ticket, fileTree, opts.models.triage, MAX_TOOL_TURNS);
         const route = routeLocalisation(ticket, parsed, opts.repo);
         if (route.kind === "fixed") {
-            output.fixed.push(route.ticket);
+            record(ticket, { kind: "fixed", ticket: route.ticket });
             log(`${ticket.id}: already fixed${route.ticket.resolvedBy ? ` (${route.ticket.resolvedBy})` : ""}`);
         }
         else {
-            output.processed.push(route.fix);
+            record(ticket, { kind: "processed", fix: route.fix });
         }
     }
     return output;

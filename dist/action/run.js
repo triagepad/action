@@ -21,6 +21,7 @@ import { localRepoAccess } from "../repo.js";
 import { runPull } from "../stages/pull.js";
 import { BrainClient } from "./brain.js";
 import { executeActions } from "./github.js";
+import { fileLedger } from "./ledger.js";
 import { routeForCi } from "./route.js";
 const ENGINE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function input(name, fallback) {
@@ -192,6 +193,8 @@ async function main() {
         log,
         // Opt-in (input stale_precheck: on): cheap pass first, strict gate, else the full loop.
         stalePrecheck: input("stale_precheck", "off") === "on" ? { model: models.classify } : undefined,
+        // Restored/saved by action.yml via the Actions cache, keyed by commit sha.
+        ledger: fileLedger(process.env.TRIAGEPAD_LEDGER_DIR ?? join(process.env.RUNNER_TEMP ?? tmpdir(), "triagepad-ledger"), log),
     });
     writeFileSync(join(outRoot, "fixes.json"), JSON.stringify(fixes, null, 2));
     // --- 5. Route + execute (PRs via the GitHub App token).

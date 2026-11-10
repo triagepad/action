@@ -87,6 +87,15 @@ runs:
       shell: bash
       run: npm install -g @anthropic-ai/claude-code
 
+    - name: Restore localisation ledger (same feedback + same commit never pays twice)
+      if: inputs.dry_run != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/triagepad-ledger
+        key: triagepad-ledger-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          triagepad-ledger-${{ github.sha }}-
+
     - name: Run Triagepad
       shell: bash
       env:
@@ -114,6 +123,13 @@ runs:
       run: |
         cd "$GITHUB_WORKSPACE"
         "$GITHUB_ACTION_PATH/node_modules/.bin/tsx" "$GITHUB_ACTION_PATH/src/action/run.ts"
+
+    - name: Save localisation ledger
+      if: always() && inputs.dry_run != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/triagepad-ledger
+        key: triagepad-ledger-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Upload pipeline outputs (raw feedback, tickets, fixes.json)
       if: always() && inputs.dry_run != 'true'
