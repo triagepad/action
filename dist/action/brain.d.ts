@@ -1,4 +1,5 @@
-import { type FixContextResponse, type MethodologyResponse, type PendingResponse, type ResultsReport, type TicketExecution } from "../brain-api/schema.js";
+import { type FixContextResponse, type MethodologyResponse, type PendingResponse, type ResultsReport, type TicketExecution, type UsageReport } from "../brain-api/schema.js";
+import type { UsageMeter } from "../core/usage.js";
 export declare class BrainClient {
     private readonly baseUrl;
     private readonly apiKey;
@@ -21,4 +22,12 @@ export declare class BrainClient {
      * already processed (original triage) — the batch replay guard would reject it.
      */
     reportExecution(ticketId: string, execution: TicketExecution): Promise<void>;
+    /**
+     * Report the run's token usage. Best-effort by design: it is sent after the
+     * results are safely recorded, and a brain that predates POST /v1/usage
+     * (404) or any other failure only costs a log line — never the run.
+     */
+    postUsage(report: UsageReport, log?: (m: string) => void): Promise<boolean>;
 }
+/** Build the wire report from a meter, limited to the tickets this run reports. */
+export declare function usageReport(runId: string, meter: UsageMeter, ticketIds: string[]): UsageReport;

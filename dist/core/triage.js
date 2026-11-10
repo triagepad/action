@@ -3,6 +3,7 @@
 // (cheap model), then one ticket per cluster with vision (strong model).
 // Transport-agnostic: attachments come through the injected readAttachment.
 import { render } from "./methodology.js";
+import { BATCH } from "./usage.js";
 const REAL_BUG_CATEGORIES = ["crash", "ui", "perf", "copy"];
 const MAX_IMAGES_PER_TICKET = 3;
 const MAX_CRASH_LOG_CHARS = 15_000;
@@ -48,6 +49,7 @@ async function classifyAndCluster(opts) {
             },
         ],
     });
+    opts.usage?.add(opts.models.classify, res.usage, BATCH);
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text")
         throw new Error("Classify pass returned no text");
@@ -113,6 +115,7 @@ async function writeTicket(opts, ticketId, cluster) {
         output_config: { format: { type: "json_schema", schema: m.schemas.ticket } },
         messages: [{ role: "user", content }],
     });
+    opts.usage?.add(opts.models.triage, res.usage, ticketId);
     const text = res.content.find((b) => b.type === "text");
     if (!text || text.type !== "text")
         throw new Error(`Ticket pass returned no text for ${ticketId}`);

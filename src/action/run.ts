@@ -19,8 +19,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import {
+  cacheHitRate,
   localiseTickets,
   triageFeedback,
+  UsageMeter,
   type FeedbackItem,
   type FixesOutput,
   type MethodologyBundle,
@@ -28,7 +30,7 @@ import {
 } from "../core/index.js";
 import { localRepoAccess } from "../repo.js";
 import { runPull } from "../stages/pull.js";
-import { BrainClient } from "./brain.js";
+import { BrainClient, usageReport } from "./brain.js";
 import { fileLedger } from "./ledger.js";
 import { executeActions, type AgentLimits, type ExecutionResult, type ExecutorConfig } from "./github.js";
 import { routeForCi, type Confidence, type FeatureRequestMode, type FixMode } from "./route.js";
@@ -108,6 +110,7 @@ async function main(): Promise<void> {
       ? `${server}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
       : null;
   const anthropicApiKey = inference === "byo" ? input("anthropic_api_key") : "";
+  const usage = new UsageMeter();
   const mapExecutions = (results: ExecutionResult[]) =>
     results.map((r) => ({
       ticketId: r.ticketId,
@@ -144,6 +147,7 @@ async function main(): Promise<void> {
         anthropicApiKey,
         agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
         agent: agentConfig(models.triage),
+        usage,
         defaultBranch: detectDefaultBranch(workspace),
         dryRun: false,
         log,
@@ -157,6 +161,7 @@ async function main(): Promise<void> {
     for (const e of mapExecutions(results)) {
       await brain.reportExecution(ticketId, e);
     }
+    await reportUsage(brain, runId, usage, [ticketId], null);
     log(`Done: per-ticket ${ticketId} → ${results.map((r) => r.outcome).join("; ")}`);
     return;
   }
@@ -214,6 +219,7 @@ async function main(): Promise<void> {
     firstTicketNumber,
     readAttachment,
     log,
+    usage,
   });
   const fixes = await localiseTickets({
     client,
@@ -224,6 +230,7 @@ async function main(): Promise<void> {
     appContext,
     readAttachment,
     log,
+    usage,
     // Opt-in (input stale_precheck: on): cheap pass first, strict gate, else the full loop.
     stalePrecheck: input("stale_precheck", "off") === "on" ? { model: models.classify } : undefined,
     // Restored/saved by action.yml via the Actions cache, keyed by commit sha.
@@ -246,6 +253,7 @@ async function main(): Promise<void> {
       anthropicApiKey,
       agentAllowedTools: input("agent_allowed_tools", "Edit,Write,Read,Grep,Glob"),
       agent: agentConfig(models.triage),
+      usage,
       defaultBranch: detectDefaultBranch(workspace),
       dryRun: false,
       log,
@@ -264,7 +272,29 @@ async function main(): Promise<void> {
     fixes,
     executions: mapExecutions(results),
   });
+  await reportUsage(brain, runId, usage, tickets.map((t) => t.id), outRoot);
   log(`Done: ${tickets.length} ticket(s) routed, results reported to the brain.`);
+}
+
+/** Log + summarise the run's token usage, persist usage.json, report it (best-effort). */
+async function reportUsage(
+  brain: BrainClient,
+  runId: string,
+  meter: UsageMeter,
+  ticketIds: string[],
+  outRoot: string | null,
+): Promise<void> {
+  const report = usageReport(runId, meter, ticketIds);
+  const t = report.total;
+  const line =
+    `usage: ${t.requests} request(s), input ${t.inputTokens}, output ${t.outputTokens}, ` +
+    `cache read ${t.cacheReadTokens}, cache write ${t.cacheCreationTokens} ` +
+    `(hit rate ${(cacheHitRate(t) * 100).toFixed(1)}%), ` +
+    `cost ${t.costUsd === null ? "unknown" : `$${t.costUsd.toFixed(4)}`}`;
+  log(line);
+  appendSummary(`\n${line}\n`);
+  if (outRoot) writeFileSync(join(outRoot, "usage.json"), JSON.stringify(report, null, 2));
+  await brain.postUsage(report, log);
 }
 
 /**

@@ -199,6 +199,7 @@ function openFixPr(cfg, action) {
             timeoutMs: limits.timeoutMs,
         });
         const result = parseAgentResult(out);
+        recordAgentUsage(cfg, limits.model, ticket.id, result);
         // Hitting --max-turns may still exit 0: a capped run is a partial edit too.
         if (result?.is_error || (result?.subtype && result.subtype !== "success")) {
             throw new Error(`agent result ${result.subtype ?? "error"}`);
@@ -269,6 +270,18 @@ export function parseAgentResult(stdout) {
     catch {
         return null;
     }
+}
+function recordAgentUsage(cfg, model, ticketId, r) {
+    if (!cfg.usage || !r?.usage)
+        return;
+    cfg.usage.addMeasured(model || "claude-code-default", {
+        inputTokens: r.usage.input_tokens ?? 0,
+        outputTokens: r.usage.output_tokens ?? 0,
+        cacheReadTokens: r.usage.cache_read_input_tokens ?? 0,
+        cacheCreationTokens: r.usage.cache_creation_input_tokens ?? 0,
+        requests: r.num_turns ?? 1,
+        costUsd: typeof r.total_cost_usd === "number" ? r.total_cost_usd : null,
+    }, ticketId);
 }
 function isTimeout(err) {
     const e = err;

@@ -2,7 +2,7 @@
 // against the shared closed schemas — the client cannot even construct a
 // payload carrying repo content (invariant, client side). The only data that
 // flows up is the ResultsReport metadata; methodology/config/feedback flow down.
-import { zFixContextResponse, zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, zTicketExecution, } from "../brain-api/schema.js";
+import { zFixContextResponse, zMethodologyResponse, zPendingResponse, zReserveResponse, zResultsReport, zTicketExecution, zUsageReport, } from "../brain-api/schema.js";
 export class BrainClient {
     baseUrl;
     apiKey;
@@ -55,4 +55,31 @@ export class BrainClient {
         const body = zTicketExecution.parse(execution);
         await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/execution`, { method: "POST", body: JSON.stringify(body) });
     }
+    /**
+     * Report the run's token usage. Best-effort by design: it is sent after the
+     * results are safely recorded, and a brain that predates POST /v1/usage
+     * (404) or any other failure only costs a log line — never the run.
+     */
+    async postUsage(report, log = () => { }) {
+        try {
+            const body = zUsageReport.parse(report);
+            await this.call("/v1/usage", { method: "POST", body: JSON.stringify(body) });
+            return true;
+        }
+        catch (err) {
+            log(`usage: not recorded by the brain (${err.message.split("\n")[0]})`);
+            return false;
+        }
+    }
+}
+/** Build the wire report from a meter, limited to the tickets this run reports. */
+export function usageReport(runId, meter, ticketIds) {
+    const tickets = meter.tickets();
+    return {
+        runId,
+        tickets: ticketIds.filter((id) => id in tickets).map((ticketId) => ({ ticketId, usage: tickets[ticketId] })),
+        batch: meter.batch(),
+        byModel: Object.entries(meter.models()).map(([model, usage]) => ({ model, usage })),
+        total: meter.total(),
+    };
 }

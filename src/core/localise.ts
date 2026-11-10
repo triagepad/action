@@ -17,6 +17,7 @@ import type {
 import { render, type MethodologyBundle } from "./methodology.js";
 import { buildPrompts } from "./modes.js";
 import { verifyCandidate } from "./validate.js";
+import type { UsageMeter } from "./usage.js";
 import { headSha, precheckFixedRoute, PRECHECK_MAX_TOOL_TURNS, type StalePrecheckOptions } from "./staleCheck.js";
 import { ledgerKey, relabel, type LedgerEntry, type LocalisationLedger } from "./ledger.js";
 import {
@@ -40,6 +41,8 @@ export interface LocaliseOptions {
   readAttachment: (path: string) => Buffer | null;
   appContext: string;
   log?: (message: string) => void;
+  /** Accumulates usage of every model call, bucketed per ticket id. */
+  usage?: UsageMeter;
   /** Opt-in cheap stale-report pre-check (see staleCheck.ts). Absent = off. */
   stalePrecheck?: StalePrecheckOptions;
   /** Idempotency store keyed by feedback ids + HEAD + model (see ledger.ts). Absent = off. */
@@ -300,6 +303,7 @@ async function localiseBug(
       tools,
       messages,
     });
+    opts.usage?.add(model, res.usage, bug.id);
     messages.push({ role: "assistant", content: res.content });
 
     if (res.stop_reason !== "tool_use") break;
@@ -330,6 +334,7 @@ async function localiseBug(
     output_config: { format: { type: "json_schema", schema: m.schemas.localisation } },
     messages,
   });
+  opts.usage?.add(model, final.usage, bug.id);
 
   const text = final.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error(`No final answer for ${bug.id}`);

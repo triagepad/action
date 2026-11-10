@@ -6,6 +6,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { render, type MethodologyBundle } from "./methodology.js";
 import type { FeedbackItem, TicketCategory, TicketSeverity, TriagedTicket } from "./types.js";
+import { BATCH, type UsageMeter } from "./usage.js";
 
 const REAL_BUG_CATEGORIES: TicketCategory[] = ["crash", "ui", "perf", "copy"];
 const MAX_IMAGES_PER_TICKET = 3;
@@ -24,6 +25,8 @@ export interface TriageOptions {
   /** First ticket number to assign (incremental callers pass their counter; default 1). */
   firstTicketNumber?: number;
   log?: (message: string) => void;
+  /** Accumulates usage: clustering in the batch bucket, ticket writing per ticket id. */
+  usage?: UsageMeter;
 }
 
 interface Cluster {
@@ -77,6 +80,7 @@ async function classifyAndCluster(opts: TriageOptions): Promise<Cluster[]> {
       },
     ],
   });
+  opts.usage?.add(opts.models.classify, res.usage, BATCH);
 
   const text = res.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error("Classify pass returned no text");
@@ -152,6 +156,7 @@ async function writeTicket(
     output_config: { format: { type: "json_schema", schema: m.schemas.ticket } },
     messages: [{ role: "user", content }],
   });
+  opts.usage?.add(opts.models.triage, res.usage, ticketId);
 
   const text = res.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error(`Ticket pass returned no text for ${ticketId}`);

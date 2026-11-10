@@ -10,12 +10,15 @@ import {
   zReserveResponse,
   zResultsReport,
   zTicketExecution,
+  zUsageReport,
   type FixContextResponse,
   type MethodologyResponse,
   type PendingResponse,
   type ResultsReport,
   type TicketExecution,
+  type UsageReport,
 } from "../brain-api/schema.js";
+import type { UsageMeter } from "../core/usage.js";
 
 export class BrainClient {
   constructor(
@@ -75,4 +78,32 @@ export class BrainClient {
     const body = zTicketExecution.parse(execution);
     await this.call(`/v1/tickets/${encodeURIComponent(ticketId)}/execution`, { method: "POST", body: JSON.stringify(body) });
   }
+
+  /**
+   * Report the run's token usage. Best-effort by design: it is sent after the
+   * results are safely recorded, and a brain that predates POST /v1/usage
+   * (404) or any other failure only costs a log line — never the run.
+   */
+  async postUsage(report: UsageReport, log: (m: string) => void = () => {}): Promise<boolean> {
+    try {
+      const body = zUsageReport.parse(report);
+      await this.call("/v1/usage", { method: "POST", body: JSON.stringify(body) });
+      return true;
+    } catch (err) {
+      log(`usage: not recorded by the brain (${(err as Error).message.split("\n")[0]})`);
+      return false;
+    }
+  }
+}
+
+/** Build the wire report from a meter, limited to the tickets this run reports. */
+export function usageReport(runId: string, meter: UsageMeter, ticketIds: string[]): UsageReport {
+  const tickets = meter.tickets();
+  return {
+    runId,
+    tickets: ticketIds.filter((id) => id in tickets).map((ticketId) => ({ ticketId, usage: tickets[ticketId]! })),
+    batch: meter.batch(),
+    byModel: Object.entries(meter.models()).map(([model, usage]) => ({ model, usage })),
+    total: meter.total(),
+  };
 }

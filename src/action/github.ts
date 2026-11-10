@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PlannedAction } from "./route.js";
 import { decisionIssueBody, featureIssueBody, ticketBody } from "./route.js";
+import type { UsageMeter } from "../core/usage.js";
 
 export interface ExecutorConfig {
   repoDir: string;
@@ -25,6 +26,8 @@ export interface ExecutorConfig {
   agentAllowedTools: string;
   /** Bounds for the headless fix agent (claude -p). Defaults: see agentLimits(). */
   agent?: Partial<AgentLimits>;
+  /** Receives the fix agent's self-reported usage + cost, bucketed per ticket. */
+  usage?: UsageMeter;
   defaultBranch: string;
   dryRun: boolean;
   log: (message: string) => void;
@@ -270,6 +273,7 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
       timeoutMs: limits.timeoutMs,
     });
     const result = parseAgentResult(out);
+    recordAgentUsage(cfg, limits.model, ticket.id, result);
     // Hitting --max-turns may still exit 0: a capped run is a partial edit too.
     if (result?.is_error || (result?.subtype && result.subtype !== "success")) {
       throw new Error(`agent result ${result.subtype ?? "error"}`);
@@ -355,6 +359,22 @@ export function parseAgentResult(stdout: string): AgentResult | null {
   } catch {
     return null;
   }
+}
+
+function recordAgentUsage(cfg: ExecutorConfig, model: string, ticketId: string, r: AgentResult | null): void {
+  if (!cfg.usage || !r?.usage) return;
+  cfg.usage.addMeasured(
+    model || "claude-code-default",
+    {
+      inputTokens: r.usage.input_tokens ?? 0,
+      outputTokens: r.usage.output_tokens ?? 0,
+      cacheReadTokens: r.usage.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: r.usage.cache_creation_input_tokens ?? 0,
+      requests: r.num_turns ?? 1,
+      costUsd: typeof r.total_cost_usd === "number" ? r.total_cost_usd : null,
+    },
+    ticketId,
+  );
 }
 
 function isTimeout(err: unknown): boolean {

@@ -454,6 +454,64 @@ export declare const zFixContextResponse: z.ZodObject<{
     }>;
 }, z.core.$strict>;
 export type FixContextResponse = z.infer<typeof zFixContextResponse>;
+/** Token totals for one bucket (a ticket, the batch, a model). Numbers only. */
+export declare const zTokenTotals: z.ZodObject<{
+    inputTokens: z.ZodNumber;
+    outputTokens: z.ZodNumber;
+    cacheReadTokens: z.ZodNumber;
+    cacheCreationTokens: z.ZodNumber;
+    requests: z.ZodNumber;
+    costUsd: z.ZodNullable<z.ZodNumber>;
+}, z.core.$strict>;
+export type TokenTotalsWire = z.infer<typeof zTokenTotals>;
+/**
+ * POST /v1/usage — what the run's model calls cost, so runs.tokens / runs.cost
+ * get written. Sent AFTER /v1/results (or the per-ticket execution report) and
+ * best-effort: a brain without this route answers 404 and the run carries on.
+ * Ids, model names and integers only — nothing repo-derived can ride along.
+ */
+export declare const zUsageReport: z.ZodObject<{
+    runId: z.ZodString;
+    tickets: z.ZodArray<z.ZodObject<{
+        ticketId: z.ZodString;
+        usage: z.ZodObject<{
+            inputTokens: z.ZodNumber;
+            outputTokens: z.ZodNumber;
+            cacheReadTokens: z.ZodNumber;
+            cacheCreationTokens: z.ZodNumber;
+            requests: z.ZodNumber;
+            costUsd: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strict>;
+    }, z.core.$strict>>;
+    batch: z.ZodObject<{
+        inputTokens: z.ZodNumber;
+        outputTokens: z.ZodNumber;
+        cacheReadTokens: z.ZodNumber;
+        cacheCreationTokens: z.ZodNumber;
+        requests: z.ZodNumber;
+        costUsd: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strict>;
+    byModel: z.ZodArray<z.ZodObject<{
+        model: z.ZodString;
+        usage: z.ZodObject<{
+            inputTokens: z.ZodNumber;
+            outputTokens: z.ZodNumber;
+            cacheReadTokens: z.ZodNumber;
+            cacheCreationTokens: z.ZodNumber;
+            requests: z.ZodNumber;
+            costUsd: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strict>;
+    }, z.core.$strict>>;
+    total: z.ZodObject<{
+        inputTokens: z.ZodNumber;
+        outputTokens: z.ZodNumber;
+        cacheReadTokens: z.ZodNumber;
+        cacheCreationTokens: z.ZodNumber;
+        requests: z.ZodNumber;
+        costUsd: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strict>;
+}, z.core.$strict>;
+export type UsageReport = z.infer<typeof zUsageReport>;
 /** GET /v1/feedback/pending */
 export declare const zPendingResponse: z.ZodObject<{
     items: z.ZodArray<z.ZodObject<{

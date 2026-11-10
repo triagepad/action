@@ -3,6 +3,7 @@ export { deriveTicketStatus, dispatchEligibility, type TicketStatus, type Ticket
 export { render, type MethodologyBundle } from "./methodology.js";
 export { triageFeedback, type TriageOptions } from "./triage.js";
 export { localiseTickets, routeLocalisation, type LocaliseOptions, type LocalisationAgentResult, type LocalisationRoute, type StaleAssessment, } from "./localise.js";
+export { UsageMeter, BATCH, cacheHitRate, priceOf, MODEL_PRICES, type TokenTotals } from "./usage.js";
 export { precheckFixedRoute, headSha, PRECHECK_MAX_TOOL_TURNS, type StalePrecheckOptions, } from "./staleCheck.js";
 export { ledgerKey, relabel, type LedgerEntry, type LocalisationLedger } from "./ledger.js";
 export { verifyCandidate } from "./validate.js";

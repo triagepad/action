@@ -1,4 +1,5 @@
 import type { PlannedAction } from "./route.js";
+import type { UsageMeter } from "../core/usage.js";
 export interface ExecutorConfig {
     repoDir: string;
     githubToken: string;
@@ -7,6 +8,8 @@ export interface ExecutorConfig {
     agentAllowedTools: string;
     /** Bounds for the headless fix agent (claude -p). Defaults: see agentLimits(). */
     agent?: Partial<AgentLimits>;
+    /** Receives the fix agent's self-reported usage + cost, bucketed per ticket. */
+    usage?: UsageMeter;
     defaultBranch: string;
     dryRun: boolean;
     log: (message: string) => void;

@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { FixedTicket, FixesOutput, FixPrompt, LocalisationCandidate, NeedsDecision, RepoAccess, TriagedTicket } from "./types.js";
 import { type MethodologyBundle } from "./methodology.js";
+import type { UsageMeter } from "./usage.js";
 import { type StalePrecheckOptions } from "./staleCheck.js";
 import { type LocalisationLedger } from "./ledger.js";
 export interface LocaliseOptions {
@@ -16,6 +17,8 @@ export interface LocaliseOptions {
     readAttachment: (path: string) => Buffer | null;
     appContext: string;
     log?: (message: string) => void;
+    /** Accumulates usage of every model call, bucketed per ticket id. */
+    usage?: UsageMeter;
     /** Opt-in cheap stale-report pre-check (see staleCheck.ts). Absent = off. */
     stalePrecheck?: StalePrecheckOptions;
     /** Idempotency store keyed by feedback ids + HEAD + model (see ledger.ts). Absent = off. */

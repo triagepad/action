@@ -220,6 +220,7 @@ async function localiseBug(opts, bug, fileTree, model, maxTurns) {
             tools,
             messages,
         });
+        opts.usage?.add(model, res.usage, bug.id);
         messages.push({ role: "assistant", content: res.content });
         if (res.stop_reason !== "tool_use")
             break;
@@ -249,6 +250,7 @@ async function localiseBug(opts, bug, fileTree, model, maxTurns) {
         output_config: { format: { type: "json_schema", schema: m.schemas.localisation } },
         messages,
     });
+    opts.usage?.add(model, final.usage, bug.id);
     const text = final.content.find((b) => b.type === "text");
     if (!text || text.type !== "text")
         throw new Error(`No final answer for ${bug.id}`);

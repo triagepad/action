@@ -20,6 +20,7 @@ export {
   type LocalisationRoute,
   type StaleAssessment,
 } from "./localise.js";
+export { UsageMeter, BATCH, cacheHitRate, priceOf, MODEL_PRICES, type TokenTotals } from "./usage.js";
 export {
   precheckFixedRoute,
   headSha,
