@@ -17,6 +17,15 @@ import type {
 import { render, type MethodologyBundle } from "./methodology.js";
 import { buildPrompts } from "./modes.js";
 import { verifyCandidate } from "./validate.js";
+import type { UsageMeter } from "./usage.js";
+import { headSha, precheckFixedRoute, PRECHECK_MAX_TOOL_TURNS, type StalePrecheckOptions } from "./staleCheck.js";
+import { ledgerKey, relabel, type LedgerEntry, type LocalisationLedger } from "./ledger.js";
+import {
+  keepOnlySharedBreakpoint,
+  localiseFirstMessage,
+  moveTailBreakpoint,
+  splitLocalisePrompt,
+} from "./promptCache.js";
 
 const MAX_TOOL_TURNS = 16;
 const MAX_CRASH_LOG_CHARS = 15_000;
@@ -32,6 +41,12 @@ export interface LocaliseOptions {
   readAttachment: (path: string) => Buffer | null;
   appContext: string;
   log?: (message: string) => void;
+  /** Accumulates usage of every model call, bucketed per ticket id. */
+  usage?: UsageMeter;
+  /** Opt-in cheap stale-report pre-check (see staleCheck.ts). Absent = off. */
+  stalePrecheck?: StalePrecheckOptions;
+  /** Idempotency store keyed by feedback ids + HEAD + model (see ledger.ts). Absent = off. */
+  ledger?: LocalisationLedger;
 }
 
 // Tool input schemas are structural (code); the descriptions are methodology.
@@ -194,6 +209,12 @@ export async function localiseTickets(opts: LocaliseOptions): Promise<FixesOutpu
   };
 
   const fileTree = opts.repo.listFiles();
+  const head = opts.ledger ? headSha(opts.repo) : null;
+  const record = (ticket: TriagedTicket, entry: LedgerEntry): void => {
+    if (entry.kind === "fixed") output.fixed.push(entry.ticket);
+    else output.processed.push(entry.fix);
+    if (opts.ledger && head) opts.ledger.put(ledgerKey(ticket, head, opts.models.triage), entry);
+  };
   for (const ticket of opts.tickets) {
     if (!ticket.isRealBug) {
       output.skipped.push({
@@ -204,13 +225,36 @@ export async function localiseTickets(opts: LocaliseOptions): Promise<FixesOutpu
       continue;
     }
     log(`${ticket.id}: ${ticket.title}`);
-    const parsed = await localiseBug(opts, ticket, fileTree);
+    const prior = opts.ledger && head ? opts.ledger.get(ledgerKey(ticket, head, opts.models.triage)) : null;
+    if (prior) {
+      const entry = relabel(prior, ticket.id);
+      if (entry.kind === "fixed") output.fixed.push(entry.ticket);
+      else output.processed.push(entry.fix);
+      log(`${ticket.id}: already localised at ${head} for the same feedback — reused, no model calls`);
+      continue;
+    }
+    if (opts.stalePrecheck) {
+      const pre = opts.stalePrecheck;
+      const cheap = await localiseBug(opts, ticket, fileTree, pre.model, pre.maxTurns ?? PRECHECK_MAX_TOOL_TURNS).catch(
+        (err: Error) => {
+          log(`${ticket.id}: pre-check failed (${err.message}) — running the full loop`);
+          return null;
+        },
+      );
+      const fixed = precheckFixedRoute(ticket, cheap, opts.repo);
+      if (fixed) {
+        record(ticket, { kind: "fixed", ticket: fixed });
+        log(`${ticket.id}: already fixed (pre-check, ${pre.model})${fixed.resolvedBy ? ` (${fixed.resolvedBy})` : ""}`);
+        continue;
+      }
+    }
+    const parsed = await localiseBug(opts, ticket, fileTree, opts.models.triage, MAX_TOOL_TURNS);
     const route = routeLocalisation(ticket, parsed, opts.repo);
     if (route.kind === "fixed") {
-      output.fixed.push(route.ticket);
+      record(ticket, { kind: "fixed", ticket: route.ticket });
       log(`${ticket.id}: already fixed${route.ticket.resolvedBy ? ` (${route.ticket.resolvedBy})` : ""}`);
     } else {
-      output.processed.push(route.fix);
+      record(ticket, { kind: "processed", fix: route.fix });
     }
   }
   return output;
@@ -220,6 +264,8 @@ async function localiseBug(
   opts: LocaliseOptions,
   bug: TriagedTicket,
   fileTree: string[],
+  model: string,
+  maxTurns: number,
 ): Promise<LocalisationAgentResult> {
   const crashBytes = bug.crashLogPath ? opts.readAttachment(bug.crashLogPath) : null;
   const crashLog = crashBytes ? crashBytes.toString("utf8").slice(0, MAX_CRASH_LOG_CHARS) : null;
@@ -234,27 +280,30 @@ async function localiseBug(
       })
     : "";
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: "user",
-      content: render(m.prompts.localiseAgent, {
-        appContext: opts.appContext,
-        layerB,
-        layerC: opts.repo.history ? m.prompts.localiseLayerC : "",
-        ticket: JSON.stringify(bug, null, 2),
-        crashSection: crashLog ? render(m.prompts.localiseCrashSection, { crashLog }) : "",
-        fileTree: fileTree.join("\n"),
-      }),
-    },
-  ];
+  // Cache layout (see promptCache.ts): run-wide prefix and per-ticket block
+  // each carry a breakpoint; a third, moving breakpoint caches the growing
+  // tool history turn by turn. Prefix order tools -> messages is stable: the
+  // tool list is built once per ticket and never changes inside the loop.
+  const blocks = splitLocalisePrompt(m.prompts.localiseAgent, {
+    appContext: opts.appContext,
+    layerB,
+    layerC: opts.repo.history ? m.prompts.localiseLayerC : "",
+    ticket: JSON.stringify(bug, null, 2),
+    crashSection: crashLog ? render(m.prompts.localiseCrashSection, { crashLog }) : "",
+    fileTree: fileTree.join("\n"),
+  });
+  const messages: Anthropic.MessageParam[] = [localiseFirstMessage(blocks)];
+  const tools = buildTools(opts.repo, m);
 
-  for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+  for (let turn = 0; turn < maxTurns; turn++) {
+    moveTailBreakpoint(messages);
     const res = await opts.client.messages.create({
-      model: opts.models.triage,
+      model,
       max_tokens: 4096,
-      tools: buildTools(opts.repo, m),
+      tools,
       messages,
     });
+    opts.usage?.add(model, res.usage, bug.id);
     messages.push({ role: "assistant", content: res.content });
 
     if (res.stop_reason !== "tool_use") break;
@@ -271,14 +320,21 @@ async function localiseBug(
     messages.push({ role: "user", content: results });
   }
 
-  // Final turn: force the structured result (no tools, JSON schema).
+  // Final turn: force the structured result (no tools, JSON schema). Measured:
+  // a json_schema output_config invalidates the loop's cache whether or not the
+  // tools are kept (read 0 either way), so the history cannot be reused here.
+  // Only the run-wide prefix keeps its marker: every later ticket's final call
+  // in the run reads it (measured: ~46.7k tokens read). Writing the rest would
+  // cost 1.25x for an entry nothing reads.
   messages.push({ role: "user", content: m.prompts.localiseFinal });
+  keepOnlySharedBreakpoint(messages, blocks.shared !== null);
   const final = await opts.client.messages.create({
-    model: opts.models.triage,
+    model,
     max_tokens: 4096,
     output_config: { format: { type: "json_schema", schema: m.schemas.localisation } },
     messages,
   });
+  opts.usage?.add(model, final.usage, bug.id);
 
   const text = final.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error(`No final answer for ${bug.id}`);

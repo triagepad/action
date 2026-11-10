@@ -161,6 +161,35 @@ export const zFixContextResponse = z.strictObject({
 });
 export type FixContextResponse = z.infer<typeof zFixContextResponse>;
 
+/** Token totals for one bucket (a ticket, the batch, a model). Numbers only. */
+export const zTokenTotals = z.strictObject({
+  inputTokens: z.number().int().min(0).max(1e10),
+  outputTokens: z.number().int().min(0).max(1e10),
+  cacheReadTokens: z.number().int().min(0).max(1e10),
+  cacheCreationTokens: z.number().int().min(0).max(1e10),
+  requests: z.number().int().min(0).max(1e6),
+  /** USD at list price, estimated in the runner; null when a model has no known price. */
+  costUsd: z.number().min(0).max(1e6).nullable(),
+});
+export type TokenTotalsWire = z.infer<typeof zTokenTotals>;
+
+/**
+ * POST /v1/usage — what the run's model calls cost, so runs.tokens / runs.cost
+ * get written. Sent AFTER /v1/results (or the per-ticket execution report) and
+ * best-effort: a brain without this route answers 404 and the run carries on.
+ * Ids, model names and integers only — nothing repo-derived can ride along.
+ */
+export const zUsageReport = z.strictObject({
+  runId: z.string().max(128),
+  /** Ticket ids as reported in the same run's executions. */
+  tickets: z.array(z.strictObject({ ticketId: z.string().max(64), usage: zTokenTotals })).max(100),
+  /** Calls that served the whole batch (clustering). */
+  batch: zTokenTotals,
+  byModel: z.array(z.strictObject({ model: z.string().max(100), usage: zTokenTotals })).max(20),
+  total: zTokenTotals,
+});
+export type UsageReport = z.infer<typeof zUsageReport>;
+
 /** GET /v1/feedback/pending */
 export const zPendingResponse = z.strictObject({
   items: z.array(zFeedbackItem).max(200),

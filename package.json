@@ -4,7 +4,10 @@
   "description": "Triagepad — TestFlight feedback → AI triage → code-linked fix PRs. The GitHub Action + the transplantable pipeline core.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
-  "repository": { "type": "git", "url": "https://github.com/triagepad/action.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/triagepad/action.git"
+  },
   "exports": {
     ".": {
       "types": "./dist/core/index.d.ts",
@@ -19,11 +22,16 @@
       "default": "./dist/repo.js"
     }
   },
-  "files": ["dist", "src", "action.yml"],
+  "files": [
+    "dist",
+    "src",
+    "action.yml"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "action:dryrun": "INPUT_DRY_RUN=true tsx src/action/run.ts"
+    "action:dryrun": "INPUT_DRY_RUN=true tsx src/action/run.ts",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

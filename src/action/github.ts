@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PlannedAction } from "./route.js";
 import { decisionIssueBody, featureIssueBody, ticketBody } from "./route.js";
+import type { UsageMeter } from "../core/usage.js";
 
 export interface ExecutorConfig {
   repoDir: string;
@@ -23,6 +24,10 @@ export interface ExecutorConfig {
   anthropicApiKey: string;
   /** Claude Code tool allowlist for the fix agent; no arbitrary bash by default. */
   agentAllowedTools: string;
+  /** Bounds for the headless fix agent (claude -p). Defaults: see agentLimits(). */
+  agent?: Partial<AgentLimits>;
+  /** Receives the fix agent's self-reported usage + cost, bucketed per ticket. */
+  usage?: UsageMeter;
   defaultBranch: string;
   dryRun: boolean;
   log: (message: string) => void;
@@ -55,13 +60,53 @@ const LABELS = {
 } as const;
 type LabelName = keyof typeof LABELS;
 
-function sh(cfg: ExecutorConfig, cmd: string, args: string[], opts?: { env?: Record<string, string> }): string {
+export interface AgentLimits {
+  /** Model for the fix agent. Default: the localisation (triage) model. */
+  model: string;
+  /** Claude Code --max-turns. */
+  maxTurns: number;
+  /** Wall-clock limit for one fix agent run, milliseconds. */
+  timeoutMs: number;
+}
+
+export const DEFAULT_AGENT_MAX_TURNS = 40;
+export const DEFAULT_AGENT_TIMEOUT_MINUTES = 20;
+/** Every other git/gh call: generous, but never unbounded. */
+const SH_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Resolve the fix-agent bounds; explicit config wins, then env, then defaults. */
+export function agentLimits(
+  given: Partial<AgentLimits> | undefined,
+  fallbackModel: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentLimits {
+  const positive = (raw: string | undefined): number | null => {
+    const n = raw === undefined || raw === "" ? NaN : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  return {
+    model: given?.model || env.TRIAGEPAD_AGENT_MODEL || fallbackModel,
+    maxTurns: given?.maxTurns ?? positive(env.TRIAGEPAD_AGENT_MAX_TURNS) ?? DEFAULT_AGENT_MAX_TURNS,
+    timeoutMs:
+      given?.timeoutMs ??
+      (positive(env.TRIAGEPAD_AGENT_TIMEOUT_MINUTES) ?? DEFAULT_AGENT_TIMEOUT_MINUTES) * 60 * 1000,
+  };
+}
+
+function sh(
+  cfg: ExecutorConfig,
+  cmd: string,
+  args: string[],
+  opts?: { env?: Record<string, string>; timeoutMs?: number },
+): string {
   return execFileSync(cmd, args, {
     cwd: cfg.repoDir,
     encoding: "utf8",
     env: { ...process.env, GH_TOKEN: cfg.githubToken, ...opts?.env },
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: 32 * 1024 * 1024,
+    timeout: opts?.timeoutMs ?? SH_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   }).trim();
 }
 
@@ -221,9 +266,28 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
   const agentPrompt =
     `Apply this fix in the current working tree. Do NOT create branches, commits or PRs — ` +
     `the harness handles those. Include regression tests where the repo has a test suite.\n\n${fix.promptBody}`;
-  sh(cfg, "claude", ["-p", agentPrompt, "--permission-mode", "acceptEdits", "--allowedTools", cfg.agentAllowedTools], {
-    env: { ANTHROPIC_API_KEY: cfg.anthropicApiKey },
-  });
+  const limits = agentLimits(cfg.agent, "");
+  try {
+    const out = sh(cfg, "claude", agentArgs(agentPrompt, cfg.agentAllowedTools, limits), {
+      env: { ANTHROPIC_API_KEY: cfg.anthropicApiKey },
+      timeoutMs: limits.timeoutMs,
+    });
+    const result = parseAgentResult(out);
+    recordAgentUsage(cfg, limits.model, ticket.id, result);
+    // Hitting --max-turns may still exit 0: a capped run is a partial edit too.
+    if (result?.is_error || (result?.subtype && result.subtype !== "success")) {
+      throw new Error(`agent result ${result.subtype ?? "error"}`);
+    }
+  } catch (err) {
+    // Timeout, --max-turns reached or a crash: whatever the agent left behind
+    // is a partial edit and must never become a PR. Discard it, report it.
+    discardWorkingTree(cfg);
+    const why = isTimeout(err)
+      ? `timed out after ${Math.round(limits.timeoutMs / 60_000)} min`
+      : `stopped (max ${limits.maxTurns} turns or error: ${errMsg(err)})`;
+    cfg.log(`${ticket.id}: fix agent ${why} — changes discarded`);
+    return { ticketId: ticket.id, outcome: `fix agent ${why} — no PR`, url: null, prUrl: null, status: "no-change" };
+  }
 
   const changed = sh(cfg, "git", ["status", "--porcelain"]);
   if (!changed) {
@@ -262,6 +326,70 @@ function openFixPr(cfg: ExecutorConfig, action: Extract<PlannedAction, { kind: "
   }
   sh(cfg, "git", ["checkout", cfg.defaultBranch]);
   return { ticketId: ticket.id, outcome, url, prUrl: url, status };
+}
+
+/** argv for the headless fix agent — bounded model, turns (the wall clock is the sh() timeout). */
+export function agentArgs(prompt: string, allowedTools: string, limits: AgentLimits): string[] {
+  const args = ["-p", prompt, "--permission-mode", "acceptEdits", "--allowedTools", allowedTools];
+  args.push("--max-turns", String(limits.maxTurns), "--output-format", "json");
+  if (limits.model) args.push("--model", limits.model);
+  return args;
+}
+
+export interface AgentResult {
+  subtype?: string;
+  is_error?: boolean;
+  num_turns?: number;
+  total_cost_usd?: number;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+}
+
+/** The final JSON object of `claude -p --output-format json`; null when absent/unparseable. */
+export function parseAgentResult(stdout: string): AgentResult | null {
+  const start = stdout.lastIndexOf("\n{");
+  const text = start === -1 ? stdout : stdout.slice(start + 1);
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as AgentResult) : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordAgentUsage(cfg: ExecutorConfig, model: string, ticketId: string, r: AgentResult | null): void {
+  if (!cfg.usage || !r?.usage) return;
+  cfg.usage.addMeasured(
+    model || "claude-code-default",
+    {
+      inputTokens: r.usage.input_tokens ?? 0,
+      outputTokens: r.usage.output_tokens ?? 0,
+      cacheReadTokens: r.usage.cache_read_input_tokens ?? 0,
+      cacheCreationTokens: r.usage.cache_creation_input_tokens ?? 0,
+      requests: r.num_turns ?? 1,
+      costUsd: typeof r.total_cost_usd === "number" ? r.total_cost_usd : null,
+    },
+    ticketId,
+  );
+}
+
+function isTimeout(err: unknown): boolean {
+  const e = err as { code?: string; signal?: string | null };
+  return e?.code === "ETIMEDOUT" || e?.signal === "SIGKILL" || e?.signal === "SIGTERM";
+}
+
+function discardWorkingTree(cfg: ExecutorConfig): void {
+  try {
+    sh(cfg, "git", ["reset", "--hard", "HEAD"]);
+    sh(cfg, "git", ["clean", "-fd"]);
+    sh(cfg, "git", ["checkout", cfg.defaultBranch]);
+  } catch (err) {
+    cfg.log(`could not reset the working tree after the fix agent stopped: ${errMsg(err)}`);
+  }
 }
 
 /** The no-silent-drops surface in CI: every ticket + its outcome, always. */
